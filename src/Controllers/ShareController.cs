@@ -9,10 +9,14 @@ namespace WlanFt
     internal sealed class ShareController : IDisposable
     {
         private readonly ShareService service;
+        private readonly object downloadLock = new object();
+        private CancellationTokenSource downloadCancellation;
         private volatile bool downloading;
 
         public event Action<string> StatusChanged;
         public event Action<string> DownloadFailed;
+        public event Action<int> DownloadProgress;
+        public event Action DownloadFinished;
 
         public ShareController(ShareService service)
         {
@@ -43,9 +47,28 @@ namespace WlanFt
 
         public void Download(RemoteFile remote, string destination)
         {
-            downloading = true;
+            CancellationTokenSource cancellation;
+            lock (downloadLock)
+            {
+                if (downloading) throw new InvalidOperationException("A download is already in progress.");
+                cancellation = new CancellationTokenSource();
+                downloadCancellation = cancellation;
+                downloading = true;
+            }
+
             ReportStatus("Downloading " + Path.GetFileName(destination) + "...");
-            ThreadPool.QueueUserWorkItem(delegate { DownloadFile(remote, destination); });
+            ReportProgress(0);
+            ThreadPool.QueueUserWorkItem(delegate { DownloadFile(remote, destination, cancellation); });
+        }
+
+        public bool CancelDownload()
+        {
+            lock (downloadLock)
+            {
+                if (downloadCancellation == null || downloadCancellation.IsCancellationRequested) return false;
+                downloadCancellation.Cancel();
+                return true;
+            }
         }
 
         private void ReportStatus(string message)
@@ -54,7 +77,13 @@ namespace WlanFt
             if (handler != null) handler(message);
         }
 
-        private void DownloadFile(RemoteFile remote, string destination)
+        private void ReportProgress(int percent)
+        {
+            Action<int> handler = DownloadProgress;
+            if (handler != null) handler(percent);
+        }
+
+        private void DownloadFile(RemoteFile remote, string destination, CancellationTokenSource cancellation)
         {
             string temporary = Path.Combine(Path.GetDirectoryName(destination), "." + Guid.NewGuid().ToString("N") + ".wlanft");
 
@@ -63,10 +92,12 @@ namespace WlanFt
                 Guid fileId;
                 if (!Guid.TryParseExact(remote.File.Id, "N", out fileId)) throw new InvalidDataException("The file identifier is invalid.");
 
+                cancellation.Token.ThrowIfCancellationRequested();
                 HttpWebRequest request = LocalNetwork.CreateRequest(remote.Address, remote.Port, "/file/" + remote.File.Id);
                 request.Timeout = 10000;
                 request.ReadWriteTimeout = 30000;
 
+                using (cancellation.Token.Register(delegate { request.Abort(); }))
                 using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
                 {
                     if (response.StatusCode != HttpStatusCode.OK) throw new InvalidDataException("The device rejected the download.");
@@ -78,25 +109,41 @@ namespace WlanFt
                     {
                         byte[] buffer = new byte[81920];
                         long total = 0;
+                        int lastPercent = 0;
                         int read;
 
                         while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
                         {
+                            cancellation.Token.ThrowIfCancellationRequested();
                             output.Write(buffer, 0, read);
                             total += read;
+                            int percent = (int)Math.Min(99, total * 100.0 / response.ContentLength);
+                            if (percent > lastPercent)
+                            {
+                                lastPercent = percent;
+                                ReportProgress(percent);
+                            }
                         }
 
                         if (total != response.ContentLength) throw new EndOfStreamException("The download was incomplete.");
                     }
                 }
 
-                if (File.Exists(destination)) File.Replace(temporary, destination, null);
-                else File.Move(temporary, destination);
+                lock (downloadLock)
+                {
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    if (File.Exists(destination)) File.Replace(temporary, destination, null);
+                    else File.Move(temporary, destination);
+                    downloadCancellation = null;
+                }
+
+                ReportProgress(100);
                 ReportStatus("Download complete: " + Path.GetFileName(destination));
             }
             catch (Exception ex)
             {
-                string message = "Could not download the file: " + ex.Message;
+                bool cancelled = cancellation.IsCancellationRequested;
+                string message = cancelled ? "Download cancelled." : "Could not download the file: " + ex.Message;
 
                 try
                 {
@@ -105,14 +152,26 @@ namespace WlanFt
                 catch (Exception cleanup)
                 {
                     message += " Could not delete the temporary file " + temporary + ": " + cleanup.Message;
+                    cancelled = false;
                 }
 
-                Action<string> handler = DownloadFailed;
-                if (handler != null) handler(message);
+                if (cancelled) ReportStatus(message);
+                else
+                {
+                    Action<string> handler = DownloadFailed;
+                    if (handler != null) handler(message);
+                }
             }
             finally
             {
-                downloading = false;
+                lock (downloadLock)
+                {
+                    downloadCancellation = null;
+                    downloading = false;
+                }
+                cancellation.Dispose();
+                Action handler = DownloadFinished;
+                if (handler != null) handler();
             }
         }
 

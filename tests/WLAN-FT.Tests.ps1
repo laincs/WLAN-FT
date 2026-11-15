@@ -69,21 +69,49 @@ try {
     $remoteFile.Port = $service.Port
     $remoteFile.File = $large
     [System.IO.File]::WriteAllText($destination, 'old content')
-    $downloadError = [WlanFt.NetworkTests]::Download($remoteFile, $destination)
+    $progress = New-Object 'System.Collections.Generic.List[int]'
+    $downloadError = [WlanFt.NetworkTests]::Download($remoteFile, $destination, $progress)
     Assert-True ([string]::IsNullOrEmpty($downloadError)) "Download failed: $downloadError"
+    Assert-True ($progress[0] -eq 0 -and $progress[$progress.Count - 1] -eq 100) 'Download progress should start at 0 and end at 100.'
+    Assert-True (@($progress | Where-Object { $_ -gt 0 -and $_ -lt 100 }).Count -gt 0) 'A large file should report intermediate progress.'
+    for ($i = 1; $i -lt $progress.Count; $i++) {
+        Assert-True ($progress[$i] -gt $progress[$i - 1]) 'Download progress should increase.'
+    }
     $actual = [System.IO.File]::ReadAllBytes($destination)
     Assert-True ([Convert]::ToBase64String($actual) -eq [Convert]::ToBase64String($expected)) 'The downloaded file differs.'
+
+    foreach ($immediately in @($true, $false)) {
+        $progress.Clear()
+        $result = [WlanFt.NetworkTests]::CancelDownload($remoteFile, $destination, $progress, $immediately)
+        Assert-True ($result -eq 'Download cancelled.') "Unexpected cancellation result: $result"
+        Assert-True (-not $progress.Contains(100)) 'A cancelled download must not report completion.'
+        if (-not $immediately) {
+            Assert-True (@($progress | Where-Object { $_ -gt 0 }).Count -gt 0) 'Cancellation should occur during the transfer.'
+        }
+        $actual = [System.IO.File]::ReadAllBytes($destination)
+        Assert-True ([Convert]::ToBase64String($actual) -eq [Convert]::ToBase64String($expected)) 'Cancellation changed the destination.'
+        Assert-True (@(Get-ChildItem -LiteralPath $directory -Filter '*.wlanft' -Force).Count -eq 0) 'Cancellation left a temporary file.'
+    }
 
     $invalidFile = New-Object WlanFt.FileRecord
     $invalidFile.Id = $large.Id
     $invalidFile.Name = $large.Name
     $invalidFile.Size = $large.Size + 1
     $remoteFile.File = $invalidFile
-    $downloadError = [WlanFt.NetworkTests]::Download($remoteFile, $destination)
+    $progress.Clear()
+    $downloadError = [WlanFt.NetworkTests]::Download($remoteFile, $destination, $progress)
     Assert-True (-not [string]::IsNullOrEmpty($downloadError)) 'A changed file should not download.'
+    Assert-True (-not $progress.Contains(100)) 'A failed download must not report completion.'
     $actual = [System.IO.File]::ReadAllBytes($destination)
     Assert-True ([Convert]::ToBase64String($actual) -eq [Convert]::ToBase64String($expected)) 'A failed download changed the destination.'
     Assert-True (@(Get-ChildItem -LiteralPath $directory -Filter '*.wlanft' -Force).Count -eq 0) 'A failed download left a temporary file.'
+
+    $remoteFile.File = $empty
+    $progress.Clear()
+    $downloadError = [WlanFt.NetworkTests]::Download($remoteFile, $destination, $progress)
+    Assert-True ([string]::IsNullOrEmpty($downloadError)) "Empty file download failed: $downloadError"
+    Assert-True ($progress.Count -eq 2 -and $progress[0] -eq 0 -and $progress[1] -eq 100) 'An empty download should report 0 then 100.'
+    Assert-True ((Get-Item -LiteralPath $destination).Length -eq 0) 'The downloaded empty file should be empty.'
 
     $udp = New-Object System.Net.Sockets.UdpClient
     $message = 'WLAN-FT-1|' + [guid]::NewGuid().ToString('N') + '|' + $service.Port
