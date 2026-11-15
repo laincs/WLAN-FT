@@ -1,0 +1,22 @@
+# Windows temporary files and incomplete downloads
+Thumbs.db
+desktop.ini
+*.wlanft
+*.tmp
+*.bak
+
+# Local editor files
+.vs/
+.vscode/
+*.suo
+*.user
+
+# Local AI assistant settings and notes
+.claude/
+.copilot/
+.cursor/
+.aider*
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.github/copilot-instructions.md
