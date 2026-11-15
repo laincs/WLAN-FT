@@ -8,7 +8,7 @@ Share files between Windows 10 and 11 computers on the same network, with no acc
 2. Open `Start.cmd` on each computer.
 3. If Windows asks about the firewall, allow access on **private networks**.
 4. Drag files into the window or use **Add files**.
-5. On the other computer, select the file under **On your network** and click **Download**.
+5. On the other computer, click **Download** next to a file under **On your network**, then choose a destination folder. You can also select a file and use the button above the list.
 
 Keep the application open on the computer sharing the files. To stop sharing, select a file and click **Stop sharing**. The list refreshes automatically within a few seconds. Individual files can be shared, but not folders.
 
@@ -28,7 +28,7 @@ The source is organized under `src`: `Models` contains file and peer data, `View
 
 ## Tests
 
-With the application closed, run in Windows PowerShell:
+Run in Windows PowerShell:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\WLAN-FT.Tests.ps1

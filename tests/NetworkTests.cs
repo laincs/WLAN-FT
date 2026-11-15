@@ -6,6 +6,16 @@ namespace WlanFt
 {
     public static class NetworkTests
     {
+        public static ShareService CreateIsolatedService()
+        {
+            return new ShareService(0);
+        }
+
+        public static int DiscoveryPort(ShareService service)
+        {
+            return service.DiscoveryPort;
+        }
+
         public static bool IsAllowed(string address)
         {
             return LocalNetwork.IsAllowed(IPAddress.Parse(address));
@@ -20,7 +30,7 @@ namespace WlanFt
         {
             string error = null;
             using (ManualResetEvent completed = new ManualResetEvent(false))
-            using (ShareController controller = new ShareController(new ShareService()))
+            using (ShareController controller = new ShareController(new ShareService(0)))
             {
                 controller.StatusChanged += delegate(string message)
                 {

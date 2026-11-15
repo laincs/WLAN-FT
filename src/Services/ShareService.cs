@@ -11,7 +11,7 @@ namespace WlanFt
 {
     public sealed class ShareService : IDisposable
     {
-        private const int DiscoveryPort = 43871;
+        private const int DefaultDiscoveryPort = 43871;
         private const string DiscoveryPrefix = "WLAN-FT-1|";
         private readonly object sync = new object();
         private readonly Dictionary<string, SharedFile> files = new Dictionary<string, SharedFile>();
@@ -19,12 +19,17 @@ namespace WlanFt
         private readonly string instanceId = Guid.NewGuid().ToString("N");
         private readonly TcpListener server;
         private readonly UdpClient discovery;
+        private readonly int discoveryPort;
         private readonly System.Threading.Timer announceTimer;
         private volatile bool running;
 
         public event Action<string> Error;
 
-        public ShareService()
+        public ShareService() : this(DefaultDiscoveryPort)
+        {
+        }
+
+        internal ShareService(int port)
         {
             server = new TcpListener(IPAddress.Any, 0);
             server.Start();
@@ -34,7 +39,8 @@ namespace WlanFt
                 discovery = new UdpClient(AddressFamily.InterNetwork);
                 discovery.ExclusiveAddressUse = false;
                 discovery.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                discovery.Client.Bind(new IPEndPoint(IPAddress.Any, DiscoveryPort));
+                discovery.Client.Bind(new IPEndPoint(IPAddress.Any, port));
+                discoveryPort = ((IPEndPoint)discovery.Client.LocalEndPoint).Port;
                 discovery.EnableBroadcast = true;
             }
             catch
@@ -52,6 +58,11 @@ namespace WlanFt
         public int Port
         {
             get { return ((IPEndPoint)server.LocalEndpoint).Port; }
+        }
+
+        internal int DiscoveryPort
+        {
+            get { return discoveryPort; }
         }
 
         private static void StartThread(ThreadStart action)
@@ -113,7 +124,7 @@ namespace WlanFt
             try
             {
                 byte[] message = Encoding.UTF8.GetBytes(DiscoveryPrefix + instanceId + "|" + Port);
-                LocalNetwork.Announce(message, DiscoveryPort);
+                LocalNetwork.Announce(message, discoveryPort);
 
                 lock (sync)
                 {

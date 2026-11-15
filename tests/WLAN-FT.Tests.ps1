@@ -32,7 +32,7 @@ try {
     (New-Object Random 42).NextBytes($expected)
     [System.IO.File]::WriteAllBytes($largePath, $expected)
 
-    $service = New-Object WlanFt.ShareService
+    $service = [WlanFt.NetworkTests]::CreateIsolatedService()
     Assert-True ([WlanFt.NetworkTests]::IsAllowed('127.0.0.1')) 'Loopback should be allowed.'
     Assert-True (-not [WlanFt.NetworkTests]::IsAllowed('8.8.8.8')) 'A public Internet address must not be allowed.'
     Assert-True (-not [WlanFt.NetworkTests]::IsAllowed('::1')) 'IPv6 must not be allowed.'
@@ -88,7 +88,7 @@ try {
     $udp = New-Object System.Net.Sockets.UdpClient
     $message = 'WLAN-FT-1|' + [guid]::NewGuid().ToString('N') + '|' + $service.Port
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($message)
-    [void]$udp.Send($bytes, $bytes.Length, '127.0.0.1', 43871)
+    [void]$udp.Send($bytes, $bytes.Length, '127.0.0.1', [WlanFt.NetworkTests]::DiscoveryPort($service))
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
 
     do {

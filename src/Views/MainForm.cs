@@ -54,7 +54,7 @@ namespace WlanFt
             };
             Label subtitle = new Label
             {
-                Text = "File sharing, made simple.",
+                Text = "Local network file sharing",
                 ForeColor = muted,
                 AutoSize = true,
                 Location = new Point(2, 45)
@@ -64,7 +64,7 @@ namespace WlanFt
             header.Controls.Add(subtitle);
             layout.Controls.Add(header, 0, 0);
 
-            drop.Text = "Drag files here to share them";
+            drop.Text = "Drop files to share";
             drop.Dock = DockStyle.Fill;
             drop.Margin = new Padding(0, 4, 0, 12);
             drop.TextAlign = ContentAlignment.MiddleCenter;
@@ -80,9 +80,9 @@ namespace WlanFt
             DragEnter += DragEnterFiles;
             DragDrop += DropFiles;
 
-            layout.Controls.Add(BuildSection("Your files", "Available while this window is open", sharedList,
+            layout.Controls.Add(BuildSection("Your files", "Shared while the app is open", sharedList,
                 "Add files", AddFiles, "Stop sharing", RemoveFiles), 0, 2);
-            layout.Controls.Add(BuildSection("On your network", "Files shared by other devices", remoteList,
+            layout.Controls.Add(BuildSection("On your network", "Files from other devices", remoteList,
                 "Download", DownloadSelected, null, null), 0, 3);
 
             status.Text = "Searching for devices on the local network...";
@@ -154,10 +154,19 @@ namespace WlanFt
             list.BorderStyle = BorderStyle.None;
             list.BackColor = Color.FromArgb(32, 41, 58);
             list.ForeColor = Color.White;
-            list.Columns.Add("File", 310);
-            list.Columns.Add("Size", 105);
-            list.Columns.Add(list == remoteList ? "Device" : "Location", 320);
-            if (list == remoteList) list.DoubleClick += DownloadSelected;
+            list.Columns.Add("File", list == remoteList ? 240 : 310);
+            list.Columns.Add("Size", list == remoteList ? 90 : 105);
+            list.Columns.Add(list == remoteList ? "Device" : "Location", list == remoteList ? 200 : 320);
+            if (list == remoteList)
+            {
+                list.Columns.Add("", 110);
+                list.SmallImageList = new ImageList { ImageSize = new Size(1, 28) };
+                list.OwnerDraw = true;
+                list.DrawColumnHeader += delegate(object sender, DrawListViewColumnHeaderEventArgs e) { e.DrawDefault = true; };
+                list.DrawSubItem += DrawRemoteSubItem;
+                list.MouseClick += RemoteFileClicked;
+                list.MouseDoubleClick += RemoteFileDoubleClicked;
+            }
             inner.SetColumnSpan(list, 2);
             inner.Controls.Add(list, 0, 1);
 
@@ -298,6 +307,7 @@ namespace WlanFt
                 ListViewItem item = new ListViewItem(remote.File.Name);
                 item.SubItems.Add(FormatSize(remote.File.Size));
                 item.SubItems.Add(String.IsNullOrEmpty(remote.Computer) ? remote.Address.ToString() : remote.Computer);
+                item.SubItems.Add("Download");
                 item.Tag = remote;
                 remoteList.Items.Add(item);
                 item.Selected = selected.Contains(remote.Address + ":" + remote.Port + ":" + remote.File.Id);
@@ -323,6 +333,59 @@ namespace WlanFt
 
         private void DownloadSelected(object sender, EventArgs e)
         {
+            if (remoteList.SelectedItems.Count != 1)
+            {
+                MessageBox.Show(this, "Select a file to download.", Text);
+                return;
+            }
+
+            DownloadFile((RemoteFile)remoteList.SelectedItems[0].Tag);
+        }
+
+        private void DrawRemoteSubItem(object sender, DrawListViewSubItemEventArgs e)
+        {
+            if (e.ColumnIndex != 3)
+            {
+                e.DrawDefault = true;
+                return;
+            }
+
+            using (Brush backgroundBrush = new SolidBrush(e.Item.Selected ? SystemColors.Highlight : remoteList.BackColor))
+                e.Graphics.FillRectangle(backgroundBrush, e.Bounds);
+
+            Rectangle button = GetDownloadButtonBounds(e.Bounds);
+            using (Brush buttonBrush = new SolidBrush(accent))
+                e.Graphics.FillRectangle(buttonBrush, button);
+            TextRenderer.DrawText(e.Graphics, "Download", remoteList.Font, button, background,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+        }
+
+        private static Rectangle GetDownloadButtonBounds(Rectangle cell)
+        {
+            return Rectangle.Inflate(cell, -3, -2);
+        }
+
+        private void RemoteFileClicked(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            ListViewHitTestInfo hit = remoteList.HitTest(e.Location);
+            if (hit.Item == null || hit.SubItem != hit.Item.SubItems[3]) return;
+            if (!GetDownloadButtonBounds(hit.SubItem.Bounds).Contains(e.Location)) return;
+
+            DownloadFile((RemoteFile)hit.Item.Tag);
+        }
+
+        private void RemoteFileDoubleClicked(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            ListViewHitTestInfo hit = remoteList.HitTest(e.Location);
+            if (hit.Item == null || hit.SubItem == hit.Item.SubItems[3]) return;
+
+            DownloadFile((RemoteFile)hit.Item.Tag);
+        }
+
+        private void DownloadFile(RemoteFile remote)
+        {
             if (controller == null)
             {
                 MessageBox.Show(this, "The network service is not available.", Text);
@@ -335,22 +398,21 @@ namespace WlanFt
                 return;
             }
 
-            if (remoteList.SelectedItems.Count != 1)
-            {
-                MessageBox.Show(this, "Select a file to download.", Text);
-                return;
-            }
-
-            RemoteFile remote = (RemoteFile)remoteList.SelectedItems[0].Tag;
             string name = Path.GetFileName(remote.File.Name);
             foreach (char invalid in Path.GetInvalidFileNameChars()) name = name.Replace(invalid, '_');
             if (String.IsNullOrWhiteSpace(name)) name = "file";
 
-            using (SaveFileDialog dialog = new SaveFileDialog { FileName = name, Title = "Save file", OverwritePrompt = true })
+            using (FolderBrowserDialog dialog = new FolderBrowserDialog { Description = "Choose a download folder", ShowNewFolderButton = true })
             {
                 if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
-                controller.Download(remote, dialog.FileName);
+                string destination = Path.Combine(dialog.SelectedPath, name);
+                if (File.Exists(destination) && MessageBox.Show(this,
+                    "A file named \"" + name + "\" already exists in this folder. Replace it?",
+                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                    return;
+
+                controller.Download(remote, destination);
             }
         }
 
