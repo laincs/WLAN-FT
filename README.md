@@ -5,7 +5,7 @@ Share files between Windows 10 and 11 computers on the same network, with no acc
 ## Usage
 
 1. Download the repository as a ZIP from **Code > Download ZIP** and extract the folder on each computer.
-2. Open `Start.cmd` on each computer.
+2. Open `Start.vbs` on each computer to launch the app without a console window.
 3. If Windows asks about the firewall, allow access on **private networks**.
 4. Drag files into the window or use **Add files**.
 5. On the other computer, click **Download** next to a file under **On your network**, then choose a destination folder. You can also select a file and use the button above the list.
@@ -16,7 +16,11 @@ You can start several downloads individually and run them in parallel. Each file
 
 Drag the top or title area to move the window. Drag a side, the bottom edge, or a corner to resize it. The buttons in the upper-right corner minimize, maximize, or close the window.
 
-The application uses Windows PowerShell 5.1 and the .NET Framework components included with Windows. `Start.cmd` allows the script to run in that process without changing the system's execution policy.
+The application uses Windows Script Host, Windows PowerShell 5.1, and the .NET Framework components included with Windows. The launcher allows the script to run in that process without changing the system's execution policy. If Windows Script Host is disabled or startup fails, run the following command from the application folder in Windows PowerShell to see the error:
+
+```powershell
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\WLAN-FT.ps1
+```
 
 The source is organized under `src`: `Models` contains file and peer data, `Views` contains the Windows interface, `Controllers` coordinates user actions, and `Services` handles network discovery and transfers. PowerShell compiles the source files in memory at startup.
 
