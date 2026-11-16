@@ -83,7 +83,7 @@ try {
     foreach ($immediately in @($true, $false)) {
         $progress.Clear()
         $result = [WlanFt.NetworkTests]::CancelDownload($remoteFile, $destination, $progress, $immediately)
-        Assert-True ($result -eq 'Download cancelled.') "Unexpected cancellation result: $result"
+        Assert-True ($result -eq 'Download cancelled: download.bin') "Unexpected cancellation result: $result"
         Assert-True (-not $progress.Contains(100)) 'A cancelled download must not report completion.'
         if (-not $immediately) {
             Assert-True (@($progress | Where-Object { $_ -gt 0 }).Count -gt 0) 'Cancellation should occur during the transfer.'
@@ -112,6 +112,9 @@ try {
     Assert-True ([string]::IsNullOrEmpty($downloadError)) "Empty file download failed: $downloadError"
     Assert-True ($progress.Count -eq 2 -and $progress[0] -eq 0 -and $progress[1] -eq 100) 'An empty download should report 0 then 100.'
     Assert-True ((Get-Item -LiteralPath $destination).Length -eq 0) 'The downloaded empty file should be empty.'
+
+    [WlanFt.NetworkTests]::TestConcurrentDownloads($directory)
+    Assert-True (@(Get-ChildItem -LiteralPath $directory -Filter '*.wlanft' -Force).Count -eq 0) 'Concurrent downloads left temporary files.'
 
     $udp = New-Object System.Net.Sockets.UdpClient
     $message = 'WLAN-FT-1|' + [guid]::NewGuid().ToString('N') + '|' + $service.Port

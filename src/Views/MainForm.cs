@@ -16,13 +16,9 @@ namespace WlanFt
         private readonly ListView remoteList = new ListView();
         private readonly ImageList actionImages = new ImageList { ImageSize = new Size(1, 28) };
         private readonly Label status = new Label();
-        private readonly ProgressBar downloadProgress = new ProgressBar();
-        private readonly Label downloadPercent = new Label();
-        private readonly Panel progressPanel = new Panel();
         private readonly Label drop = new Label();
         private readonly System.Windows.Forms.Timer refresh = new System.Windows.Forms.Timer();
         private ShareController controller;
-        private RemoteFile activeDownload;
 
         public MainForm()
         {
@@ -95,23 +91,7 @@ namespace WlanFt
             status.TextAlign = ContentAlignment.MiddleLeft;
             status.ForeColor = muted;
             status.AutoEllipsis = true;
-            Panel statusArea = new Panel { Dock = DockStyle.Fill };
-            progressPanel.Dock = DockStyle.Right;
-            progressPanel.Width = 245;
-            progressPanel.Visible = false;
-            downloadProgress.Location = new Point(0, 7);
-            downloadProgress.Size = new Size(185, 20);
-            downloadProgress.Maximum = 100;
-            downloadProgress.Style = ProgressBarStyle.Continuous;
-            downloadPercent.Location = new Point(192, 5);
-            downloadPercent.Size = new Size(50, 24);
-            downloadPercent.ForeColor = muted;
-            downloadPercent.TextAlign = ContentAlignment.MiddleRight;
-            progressPanel.Controls.Add(downloadProgress);
-            progressPanel.Controls.Add(downloadPercent);
-            statusArea.Controls.Add(status);
-            statusArea.Controls.Add(progressPanel);
-            layout.Controls.Add(statusArea, 0, 4);
+            layout.Controls.Add(status, 0, 4);
 
             Shown += StartService;
             FormClosing += delegate
@@ -175,9 +155,10 @@ namespace WlanFt
             list.BorderStyle = BorderStyle.None;
             list.BackColor = Color.FromArgb(32, 41, 58);
             list.ForeColor = Color.White;
-            list.Columns.Add("File", 240);
-            list.Columns.Add("Size", 90);
-            list.Columns.Add(list == remoteList ? "Device" : "Location", 200);
+            list.Columns.Add("File", list == remoteList ? 185 : 240);
+            list.Columns.Add("Size", 80);
+            list.Columns.Add(list == remoteList ? "Device" : "Location", list == remoteList ? 150 : 200);
+            if (list == remoteList) list.Columns.Add("Progress", 115);
             list.Columns.Add("", 110);
             list.SmallImageList = actionImages;
             list.OwnerDraw = true;
@@ -225,8 +206,7 @@ namespace WlanFt
                 controller = new ShareController(new ShareService());
                 controller.StatusChanged += SetStatus;
                 controller.DownloadFailed += ShowDownloadError;
-                controller.DownloadProgress += SetDownloadProgress;
-                controller.DownloadFinished += HideDownloadProgress;
+                controller.DownloadFinished += DownloadFinished;
                 refresh.Interval = 1000;
                 refresh.Tick += delegate { RefreshRemoteFiles(); };
                 refresh.Start();
@@ -258,7 +238,7 @@ namespace WlanFt
             status.Text = message;
         }
 
-        private void SetDownloadProgress(int percent)
+        private void DownloadFinished(RemoteFile remote)
         {
             if (IsDisposed || !IsHandleCreated) return;
 
@@ -266,34 +246,12 @@ namespace WlanFt
             {
                 try
                 {
-                    BeginInvoke(new Action<int>(SetDownloadProgress), percent);
+                    BeginInvoke(new Action<RemoteFile>(DownloadFinished), remote);
                 }
                 catch (InvalidOperationException) { }
                 return;
             }
 
-            downloadProgress.Value = percent;
-            downloadPercent.Text = percent + "%";
-            progressPanel.Visible = true;
-        }
-
-        private void HideDownloadProgress()
-        {
-            if (IsDisposed || !IsHandleCreated) return;
-
-            if (InvokeRequired)
-            {
-                try
-                {
-                    BeginInvoke(new Action(HideDownloadProgress));
-                }
-                catch (InvalidOperationException) { }
-                return;
-            }
-
-            if (controller != null && controller.IsDownloading) return;
-            progressPanel.Visible = false;
-            activeDownload = null;
             RefreshRemoteFiles();
         }
 
@@ -375,39 +333,41 @@ namespace WlanFt
             foreach (ListViewItem item in remoteList.SelectedItems)
             {
                 RemoteFile remote = (RemoteFile)item.Tag;
-                selected.Add(remote.Address + ":" + remote.Port + ":" + remote.File.Id);
+                selected.Add(ShareController.DownloadKey(remote));
             }
+
+            Dictionary<string, DownloadTransfer> active = new Dictionary<string, DownloadTransfer>();
+            foreach (DownloadTransfer transfer in controller.GetDownloads())
+                active.Add(ShareController.DownloadKey(transfer.Remote), transfer);
 
             remoteList.BeginUpdate();
             remoteList.Items.Clear();
 
-            bool activeFound = false;
+            HashSet<string> shown = new HashSet<string>();
             foreach (RemoteFile remote in controller.GetRemoteFiles())
             {
-                if (IsActiveDownload(remote)) activeFound = true;
-                AddRemoteFile(remote, selected);
+                string key = ShareController.DownloadKey(remote);
+                shown.Add(key);
+                DownloadTransfer transfer;
+                active.TryGetValue(key, out transfer);
+                AddRemoteFile(remote, selected, transfer);
             }
-            if (!activeFound && activeDownload != null && controller.IsDownloading)
-                AddRemoteFile(activeDownload, selected);
+            foreach (KeyValuePair<string, DownloadTransfer> entry in active)
+                if (!shown.Contains(entry.Key)) AddRemoteFile(entry.Value.Remote, selected, entry.Value);
 
             remoteList.EndUpdate();
         }
 
-        private void AddRemoteFile(RemoteFile remote, HashSet<string> selected)
+        private void AddRemoteFile(RemoteFile remote, HashSet<string> selected, DownloadTransfer transfer)
         {
             ListViewItem item = new ListViewItem(remote.File.Name);
             item.SubItems.Add(FormatSize(remote.File.Size));
             item.SubItems.Add(String.IsNullOrEmpty(remote.Computer) ? remote.Address.ToString() : remote.Computer);
-            item.SubItems.Add(IsActiveDownload(remote) && controller.IsDownloading ? "Cancel" : "Download");
+            item.SubItems.Add(transfer == null ? "" : transfer.Progress + "%");
+            item.SubItems.Add(transfer == null ? "Download" : "Cancel");
             item.Tag = remote;
             remoteList.Items.Add(item);
-            item.Selected = selected.Contains(remote.Address + ":" + remote.Port + ":" + remote.File.Id);
-        }
-
-        private bool IsActiveDownload(RemoteFile remote)
-        {
-            return activeDownload != null && activeDownload.Port == remote.Port &&
-                activeDownload.Address.Equals(remote.Address) && activeDownload.File.Id == remote.File.Id;
+            item.Selected = selected.Contains(ShareController.DownloadKey(remote));
         }
 
         private static string FormatSize(long size)
@@ -438,13 +398,32 @@ namespace WlanFt
 
         private void DrawActionSubItem(object sender, DrawListViewSubItemEventArgs e)
         {
-            if (e.ColumnIndex != 3)
+            ListView list = (ListView)sender;
+            if (list == remoteList && e.ColumnIndex == 3)
+            {
+                using (Brush backgroundBrush = new SolidBrush(e.Item.Selected ? SystemColors.Highlight : list.BackColor))
+                    e.Graphics.FillRectangle(backgroundBrush, e.Bounds);
+                int percent;
+                if (Int32.TryParse(e.SubItem.Text.TrimEnd('%'), out percent))
+                {
+                    Rectangle bar = Rectangle.Inflate(e.Bounds, -3, -5);
+                    using (Brush track = new SolidBrush(Color.FromArgb(54, 65, 83)))
+                        e.Graphics.FillRectangle(track, bar);
+                    Rectangle fill = new Rectangle(bar.X, bar.Y, bar.Width * percent / 100, bar.Height);
+                    using (Brush fillBrush = new SolidBrush(accent))
+                        e.Graphics.FillRectangle(fillBrush, fill);
+                    TextRenderer.DrawText(e.Graphics, e.SubItem.Text, list.Font, bar, Color.White,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+                }
+                return;
+            }
+
+            if (e.ColumnIndex != (list == remoteList ? 4 : 3))
             {
                 e.DrawDefault = true;
                 return;
             }
 
-            ListView list = (ListView)sender;
             using (Brush backgroundBrush = new SolidBrush(e.Item.Selected ? SystemColors.Highlight : list.BackColor))
                 e.Graphics.FillRectangle(backgroundBrush, e.Bounds);
 
@@ -464,13 +443,13 @@ namespace WlanFt
         {
             if (e.Button != MouseButtons.Left) return;
             ListViewHitTestInfo hit = remoteList.HitTest(e.Location);
-            if (hit.Item == null || hit.SubItem != hit.Item.SubItems[3]) return;
+            if (hit.Item == null || hit.SubItem != hit.Item.SubItems[4]) return;
             if (!GetDownloadButtonBounds(hit.SubItem.Bounds).Contains(e.Location)) return;
 
             RemoteFile remote = (RemoteFile)hit.Item.Tag;
-            if (controller != null && controller.IsDownloading && IsActiveDownload(remote))
+            if (hit.SubItem.Text == "Cancel")
             {
-                if (controller.CancelDownload()) SetStatus("Cancelling download...");
+                if (controller != null && controller.CancelDownload(remote)) SetStatus("Cancelling " + remote.File.Name + "...");
                 return;
             }
             DownloadFile(remote);
@@ -480,7 +459,7 @@ namespace WlanFt
         {
             if (e.Button != MouseButtons.Left) return;
             ListViewHitTestInfo hit = remoteList.HitTest(e.Location);
-            if (hit.Item == null || hit.SubItem == hit.Item.SubItems[3]) return;
+            if (hit.Item == null || hit.SubItem == hit.Item.SubItems[4]) return;
 
             DownloadFile((RemoteFile)hit.Item.Tag);
         }
@@ -493,10 +472,13 @@ namespace WlanFt
                 return;
             }
 
-            if (controller.IsDownloading)
+            foreach (DownloadTransfer transfer in controller.GetDownloads())
             {
-                MessageBox.Show(this, "Wait for the current download to finish.", Text);
-                return;
+                if (ShareController.DownloadKey(transfer.Remote) == ShareController.DownloadKey(remote))
+                {
+                    MessageBox.Show(this, "This file is already downloading.", Text);
+                    return;
+                }
             }
 
             string name = Path.GetFileName(remote.File.Name);
@@ -513,9 +495,15 @@ namespace WlanFt
                     Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
                     return;
 
-                activeDownload = remote;
-                controller.Download(remote, destination);
-                RefreshRemoteFiles();
+                try
+                {
+                    controller.Download(remote, destination);
+                    RefreshRemoteFiles();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "Could not start the download: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
         }
 

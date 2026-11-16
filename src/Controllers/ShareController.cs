@@ -10,13 +10,13 @@ namespace WlanFt
     {
         private readonly ShareService service;
         private readonly object downloadLock = new object();
-        private CancellationTokenSource downloadCancellation;
-        private volatile bool downloading;
+        private readonly Dictionary<string, DownloadTransfer> downloads = new Dictionary<string, DownloadTransfer>();
+        private bool disposed;
 
         public event Action<string> StatusChanged;
         public event Action<string> DownloadFailed;
-        public event Action<int> DownloadProgress;
-        public event Action DownloadFinished;
+        public event Action<RemoteFile, int> DownloadProgress;
+        public event Action<RemoteFile> DownloadFinished;
 
         public ShareController(ShareService service)
         {
@@ -24,9 +24,14 @@ namespace WlanFt
             service.Error += ReportStatus;
         }
 
-        public bool IsDownloading
+        public static string DownloadKey(RemoteFile remote)
         {
-            get { return downloading; }
+            return remote.Address + ":" + remote.Port + ":" + remote.File.Id;
+        }
+
+        public List<DownloadTransfer> GetDownloads()
+        {
+            lock (downloadLock) return new List<DownloadTransfer>(downloads.Values);
         }
 
         public FileRecord Share(string path)
@@ -47,26 +52,34 @@ namespace WlanFt
 
         public void Download(RemoteFile remote, string destination)
         {
-            CancellationTokenSource cancellation;
+            string key = DownloadKey(remote);
+            string fullDestination = Path.GetFullPath(destination);
+            DownloadTransfer transfer;
             lock (downloadLock)
             {
-                if (downloading) throw new InvalidOperationException("A download is already in progress.");
-                cancellation = new CancellationTokenSource();
-                downloadCancellation = cancellation;
-                downloading = true;
+                if (disposed) throw new ObjectDisposedException("ShareController");
+                if (downloads.ContainsKey(key)) throw new InvalidOperationException("This file is already downloading.");
+                foreach (DownloadTransfer active in downloads.Values)
+                    if (String.Equals(active.Destination, fullDestination, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("Another download is using this destination.");
+
+                transfer = new DownloadTransfer(remote, fullDestination);
+                downloads.Add(key, transfer);
             }
 
             ReportStatus("Downloading " + Path.GetFileName(destination) + "...");
-            ReportProgress(0);
-            ThreadPool.QueueUserWorkItem(delegate { DownloadFile(remote, destination, cancellation); });
+            ReportProgress(transfer, 0);
+            ThreadPool.QueueUserWorkItem(delegate { DownloadFile(key, transfer); });
         }
 
-        public bool CancelDownload()
+        public bool CancelDownload(RemoteFile remote)
         {
             lock (downloadLock)
             {
-                if (downloadCancellation == null || downloadCancellation.IsCancellationRequested) return false;
-                downloadCancellation.Cancel();
+                DownloadTransfer transfer;
+                if (!downloads.TryGetValue(DownloadKey(remote), out transfer) ||
+                    transfer.Cancellation.IsCancellationRequested) return false;
+                transfer.Cancellation.Cancel();
                 return true;
             }
         }
@@ -77,14 +90,18 @@ namespace WlanFt
             if (handler != null) handler(message);
         }
 
-        private void ReportProgress(int percent)
+        private void ReportProgress(DownloadTransfer transfer, int percent)
         {
-            Action<int> handler = DownloadProgress;
-            if (handler != null) handler(percent);
+            transfer.Progress = percent;
+            Action<RemoteFile, int> handler = DownloadProgress;
+            if (handler != null) handler(transfer.Remote, percent);
         }
 
-        private void DownloadFile(RemoteFile remote, string destination, CancellationTokenSource cancellation)
+        private void DownloadFile(string key, DownloadTransfer transfer)
         {
+            RemoteFile remote = transfer.Remote;
+            string destination = transfer.Destination;
+            CancellationTokenSource cancellation = transfer.Cancellation;
             string temporary = Path.Combine(Path.GetDirectoryName(destination), "." + Guid.NewGuid().ToString("N") + ".wlanft");
 
             try
@@ -96,6 +113,7 @@ namespace WlanFt
                 HttpWebRequest request = LocalNetwork.CreateRequest(remote.Address, remote.Port, "/file/" + remote.File.Id);
                 request.Timeout = 10000;
                 request.ReadWriteTimeout = 30000;
+                request.ServicePoint.ConnectionLimit = Int32.MaxValue;
 
                 using (cancellation.Token.Register(delegate { request.Abort(); }))
                 using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
@@ -121,7 +139,7 @@ namespace WlanFt
                             if (percent > lastPercent)
                             {
                                 lastPercent = percent;
-                                ReportProgress(percent);
+                                ReportProgress(transfer, percent);
                             }
                         }
 
@@ -134,16 +152,16 @@ namespace WlanFt
                     cancellation.Token.ThrowIfCancellationRequested();
                     if (File.Exists(destination)) File.Replace(temporary, destination, null);
                     else File.Move(temporary, destination);
-                    downloadCancellation = null;
+                    downloads.Remove(key);
                 }
 
-                ReportProgress(100);
+                ReportProgress(transfer, 100);
                 ReportStatus("Download complete: " + Path.GetFileName(destination));
             }
             catch (Exception ex)
             {
                 bool cancelled = cancellation.IsCancellationRequested;
-                string message = cancelled ? "Download cancelled." : "Could not download the file: " + ex.Message;
+                string message = cancelled ? "Download cancelled: " + Path.GetFileName(destination) : "Could not download " + Path.GetFileName(destination) + ": " + ex.Message;
 
                 try
                 {
@@ -166,17 +184,24 @@ namespace WlanFt
             {
                 lock (downloadLock)
                 {
-                    downloadCancellation = null;
-                    downloading = false;
+                    DownloadTransfer current;
+                    if (downloads.TryGetValue(key, out current) && Object.ReferenceEquals(current, transfer))
+                        downloads.Remove(key);
                 }
                 cancellation.Dispose();
-                Action handler = DownloadFinished;
-                if (handler != null) handler();
+                Action<RemoteFile> handler = DownloadFinished;
+                if (handler != null) handler(remote);
             }
         }
 
         public void Dispose()
         {
+            lock (downloadLock)
+            {
+                disposed = true;
+                foreach (DownloadTransfer transfer in downloads.Values)
+                    transfer.Cancellation.Cancel();
+            }
             service.Error -= ReportStatus;
             service.Dispose();
         }

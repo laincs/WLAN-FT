@@ -12,7 +12,7 @@ Share files between Windows 10 and 11 computers on the same network, with no acc
 
 Keep the application open on the computer sharing the files. To stop sharing, click **Remove** next to a file or select it and click **Stop sharing**. This does not delete the original file. The list refreshes automatically within a few seconds. Individual files can be shared, but not folders.
 
-A progress bar shows the percentage downloaded. It reaches 100% once the file has been saved successfully. Click **Cancel** next to the file to stop an ongoing download.
+You can start several downloads individually and run them in parallel. Each file has its own progress bar and **Cancel** button. Two active downloads cannot use the same destination.
 
 The application uses Windows PowerShell 5.1 and the .NET Framework components included with Windows. `Start.cmd` allows the script to run in that process without changing the system's execution policy.
 
