@@ -14,6 +14,8 @@ Keep the application open on the computer sharing the files. To stop sharing, cl
 
 You can start several downloads individually and run them in parallel. Each file has its own progress bar and **Cancel** button. Two active downloads cannot use the same destination.
 
+Drag the top or title area to move the window. Drag a side, the bottom edge, or a corner to resize it. The buttons in the upper-right corner minimize, maximize, or close the window.
+
 The application uses Windows PowerShell 5.1 and the .NET Framework components included with Windows. `Start.cmd` allows the script to run in that process without changing the system's execution policy.
 
 The source is organized under `src`: `Models` contains file and peer data, `Views` contains the Windows interface, `Controllers` coordinates user actions, and `Services` handles network discovery and transfers. PowerShell compiles the source files in memory at startup.

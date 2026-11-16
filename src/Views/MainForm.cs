@@ -1,13 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace WlanFt
 {
     internal sealed class MainForm : Form
     {
+        private const int TopPadding = 20;
         private readonly Color background = Color.FromArgb(17, 22, 34);
         private readonly Color panelColor = Color.FromArgb(27, 35, 51);
         private readonly Color muted = Color.FromArgb(159, 174, 193);
@@ -18,7 +21,19 @@ namespace WlanFt
         private readonly Label status = new Label();
         private readonly Label drop = new Label();
         private readonly System.Windows.Forms.Timer refresh = new System.Windows.Forms.Timer();
+        private readonly ToolTip windowToolTip = new ToolTip();
+        private Button maximizeButton;
+        private bool resizing;
+        private int resizeEdges;
+        private Point resizeStart;
+        private Rectangle resizeBounds;
         private ShareController controller;
+
+        [DllImport("user32.dll")]
+        private static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr handle, int message, IntPtr wParam, IntPtr lParam);
 
         public MainForm()
         {
@@ -26,6 +41,7 @@ namespace WlanFt
             Font = new Font("Segoe UI", 10F);
             BackColor = background;
             ForeColor = Color.White;
+            FormBorderStyle = FormBorderStyle.None;
             MinimumSize = new Size(800, 620);
             Size = new Size(1040, 720);
             StartPosition = FormStartPosition.CenterScreen;
@@ -33,7 +49,7 @@ namespace WlanFt
             TableLayoutPanel layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                Padding = new Padding(28, 20, 28, 18),
+                Padding = new Padding(28, TopPadding, 28, 18),
                 ColumnCount = 1,
                 RowCount = 5,
                 BackColor = background
@@ -44,6 +60,14 @@ namespace WlanFt
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
             Controls.Add(layout);
+            layout.MouseDown += ResizeMouseDown;
+            layout.MouseMove += ResizeMouseMove;
+            layout.MouseUp += ResizeMouseUp;
+            layout.MouseCaptureChanged += ResizeCaptureChanged;
+            MouseDown += ResizeMouseDown;
+            MouseMove += ResizeMouseMove;
+            MouseUp += ResizeMouseUp;
+            MouseCaptureChanged += ResizeCaptureChanged;
 
             Panel header = new Panel { Dock = DockStyle.Fill };
             Label title = new Label
@@ -63,6 +87,24 @@ namespace WlanFt
 
             header.Controls.Add(title);
             header.Controls.Add(subtitle);
+            FlowLayoutPanel windowButtons = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Right,
+                AutoSize = true,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false
+            };
+            windowButtons.Controls.Add(MakeWindowButton("\u2013", "Minimize", delegate { WindowState = FormWindowState.Minimized; }));
+            maximizeButton = MakeWindowButton("\u25a1", "Maximize", ToggleMaximize);
+            windowButtons.Controls.Add(maximizeButton);
+            windowButtons.Controls.Add(MakeWindowButton("\u00d7", "Close", delegate { Close(); }));
+            header.Controls.Add(windowButtons);
+            header.MouseDown += MoveWindow;
+            title.MouseDown += MoveWindow;
+            subtitle.MouseDown += MoveWindow;
+            header.DoubleClick += ToggleMaximize;
+            title.DoubleClick += ToggleMaximize;
+            subtitle.DoubleClick += ToggleMaximize;
             layout.Controls.Add(header, 0, 0);
 
             drop.Text = "Drop files to share";
@@ -99,7 +141,154 @@ namespace WlanFt
                 refresh.Stop();
                 if (controller != null) controller.Dispose();
             };
-            FormClosed += delegate { actionImages.Dispose(); };
+            FormClosed += delegate { actionImages.Dispose(); windowToolTip.Dispose(); };
+        }
+
+        private Button MakeWindowButton(string text, string name, EventHandler click)
+        {
+            Button button = new Button
+            {
+                Text = text,
+                AccessibleName = name,
+                Size = new Size(40, 32),
+                Margin = new Padding(0),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = background,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 13F),
+                Cursor = Cursors.Hand
+            };
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.MouseOverBackColor = name == "Close" ? Color.FromArgb(190, 45, 50) : panelColor;
+            button.Click += click;
+            windowToolTip.SetToolTip(button, name);
+            return button;
+        }
+
+        private void ToggleMaximize(object sender, EventArgs e)
+        {
+            if (WindowState == FormWindowState.Maximized)
+                WindowState = FormWindowState.Normal;
+            else
+            {
+                MaximizedBounds = Screen.FromControl(this).WorkingArea;
+                WindowState = FormWindowState.Maximized;
+            }
+        }
+
+        private void MoveWindow(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || e.Clicks != 1) return;
+            ReleaseCapture();
+            SendMessage(Handle, 0x00A1, (IntPtr)2, IntPtr.Zero);
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            if (WindowState == FormWindowState.Minimized || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+
+            Region previous = Region;
+            if (WindowState == FormWindowState.Maximized)
+                Region = null;
+            else
+            {
+                int diameter = Math.Min(24, Math.Min(ClientSize.Width, ClientSize.Height));
+                using (GraphicsPath path = new GraphicsPath())
+                {
+                    path.AddArc(0, 0, diameter, diameter, 180, 90);
+                    path.AddArc(ClientSize.Width - diameter, 0, diameter, diameter, 270, 90);
+                    path.AddArc(ClientSize.Width - diameter, ClientSize.Height - diameter, diameter, diameter, 0, 90);
+                    path.AddArc(0, ClientSize.Height - diameter, diameter, diameter, 90, 90);
+                    path.CloseFigure();
+                    Region = new Region(path);
+                }
+            }
+            if (previous != null) previous.Dispose();
+
+            if (maximizeButton != null)
+            {
+                bool maximized = WindowState == FormWindowState.Maximized;
+                maximizeButton.Text = maximized ? "\u2750" : "\u25a1";
+                maximizeButton.AccessibleName = maximized ? "Restore" : "Maximize";
+                windowToolTip.SetToolTip(maximizeButton, maximizeButton.AccessibleName);
+            }
+        }
+
+        private int GetResizeEdges(Point point)
+        {
+            if (WindowState != FormWindowState.Normal) return 0;
+            const int border = 8;
+            int edges = 0;
+            if (point.X < border) edges |= 1;
+            else if (point.X >= ClientSize.Width - border) edges |= 2;
+            if (point.Y < border && edges != 0) edges |= 4;
+            else if (point.Y >= ClientSize.Height - border) edges |= 8;
+            return edges;
+        }
+
+        private bool IsTopDragArea(Point point)
+        {
+            return point.X >= 0 && point.X < ClientSize.Width && point.Y >= 0 &&
+                point.Y < TopPadding && GetResizeEdges(point) == 0;
+        }
+
+        private void ResizeMouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            Control control = (Control)sender;
+            Point point = PointToClient(control.PointToScreen(e.Location));
+            int edges = GetResizeEdges(point);
+            if (edges == 0)
+            {
+                if (IsTopDragArea(point)) MoveWindow(sender, e);
+                return;
+            }
+            resizing = true;
+            resizeEdges = edges;
+            resizeStart = Cursor.Position;
+            resizeBounds = Bounds;
+            control.Capture = true;
+        }
+
+        private void ResizeMouseMove(object sender, MouseEventArgs e)
+        {
+            Control control = (Control)sender;
+            if (!resizing)
+            {
+                int edges = GetResizeEdges(PointToClient(control.PointToScreen(e.Location)));
+                if (edges == 5 || edges == 10) control.Cursor = Cursors.SizeNWSE;
+                else if (edges == 6 || edges == 9) control.Cursor = Cursors.SizeNESW;
+                else if ((edges & 3) != 0) control.Cursor = Cursors.SizeWE;
+                else if ((edges & 12) != 0) control.Cursor = Cursors.SizeNS;
+                else control.Cursor = Cursors.Default;
+                return;
+            }
+
+            Point current = Cursor.Position;
+            int dx = current.X - resizeStart.X;
+            int dy = current.Y - resizeStart.Y;
+            int left = resizeBounds.Left;
+            int top = resizeBounds.Top;
+            int right = resizeBounds.Right;
+            int bottom = resizeBounds.Bottom;
+            if ((resizeEdges & 1) != 0) left = Math.Min(left + dx, right - MinimumSize.Width);
+            if ((resizeEdges & 2) != 0) right = Math.Max(right + dx, left + MinimumSize.Width);
+            if ((resizeEdges & 4) != 0) top = Math.Min(top + dy, bottom - MinimumSize.Height);
+            if ((resizeEdges & 8) != 0) bottom = Math.Max(bottom + dy, top + MinimumSize.Height);
+            Bounds = Rectangle.FromLTRB(left, top, right, bottom);
+        }
+
+        private void ResizeMouseUp(object sender, MouseEventArgs e)
+        {
+            if (!resizing) return;
+            resizing = false;
+            ((Control)sender).Capture = false;
+        }
+
+        private void ResizeCaptureChanged(object sender, EventArgs e)
+        {
+            if (!((Control)sender).Capture) resizing = false;
         }
 
         private Control BuildSection(string title, ListView list, string action, EventHandler click, string secondAction, EventHandler secondClick)

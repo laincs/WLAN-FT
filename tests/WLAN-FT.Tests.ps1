@@ -4,6 +4,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $sources = @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filter '*.cs' -File -Recurse |
     ForEach-Object { $_.FullName })
 $sources += Join-Path $PSScriptRoot 'NetworkTests.cs'
+$sources += Join-Path $PSScriptRoot 'WindowTests.cs'
 
 Add-Type -Path $sources -ReferencedAssemblies @(
     'System.dll', 'System.Core.dll', 'System.Drawing.dll',
@@ -115,6 +116,7 @@ try {
 
     [WlanFt.NetworkTests]::TestConcurrentDownloads($directory)
     Assert-True (@(Get-ChildItem -LiteralPath $directory -Filter '*.wlanft' -Force).Count -eq 0) 'Concurrent downloads left temporary files.'
+    [WlanFt.WindowTests]::CheckWindow()
 
     $udp = New-Object System.Net.Sockets.UdpClient
     $message = 'WLAN-FT-1|' + [guid]::NewGuid().ToString('N') + '|' + $service.Port
