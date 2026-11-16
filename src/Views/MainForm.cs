@@ -349,9 +349,12 @@ namespace WlanFt
             list.Columns.Add(list == remoteList ? "Device" : "Location", list == remoteList ? 150 : 200);
             if (list == remoteList) list.Columns.Add("Progress", 115);
             list.Columns.Add("", 110);
+            list.Resize += ResizeActionColumn;
+            list.ColumnWidthChanged += ResizeActionColumn;
+            ResizeActionColumn(list, EventArgs.Empty);
             list.SmallImageList = actionImages;
             list.OwnerDraw = true;
-            list.DrawColumnHeader += delegate(object sender, DrawListViewColumnHeaderEventArgs e) { e.DrawDefault = true; };
+            list.DrawColumnHeader += DrawColumnHeader;
             list.DrawSubItem += DrawActionSubItem;
             if (list == remoteList)
             {
@@ -366,6 +369,18 @@ namespace WlanFt
             inner.Controls.Add(list, 0, 1);
 
             return card;
+        }
+
+        private void ResizeActionColumn(object sender, EventArgs e)
+        {
+            ListView list = (ListView)sender;
+            int last = list.Columns.Count - 1;
+            if (last < 0) return;
+
+            int remaining = list.ClientSize.Width;
+            for (int i = 0; i < last; i++) remaining -= list.Columns[i].Width;
+            int width = Math.Max(110, remaining);
+            if (list.Columns[last].Width != width) list.Columns[last].Width = width;
         }
 
         private Button MakeButton(string text, EventHandler click, bool primary)
@@ -585,6 +600,25 @@ namespace WlanFt
             DownloadFile((RemoteFile)remoteList.SelectedItems[0].Tag);
         }
 
+        private void DrawColumnHeader(object sender, DrawListViewColumnHeaderEventArgs e)
+        {
+            using (Brush brush = new SolidBrush(Color.FromArgb(37, 47, 65)))
+                e.Graphics.FillRectangle(brush, e.Bounds);
+
+            using (Pen separator = new Pen(Color.FromArgb(54, 65, 83)))
+            {
+                e.Graphics.DrawLine(separator, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
+                if (e.Bounds.Height > 9)
+                    e.Graphics.DrawLine(separator, e.Bounds.Right - 1, e.Bounds.Top + 4, e.Bounds.Right - 1, e.Bounds.Bottom - 5);
+            }
+
+            if (e.Bounds.Width <= 16) return;
+            Rectangle textBounds = Rectangle.Inflate(e.Bounds, -8, 0);
+            TextRenderer.DrawText(e.Graphics, e.Header.Text, ((ListView)sender).Font, textBounds, muted,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
+                TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.PreserveGraphicsClipping);
+        }
+
         private void DrawActionSubItem(object sender, DrawListViewSubItemEventArgs e)
         {
             ListView list = (ListView)sender;
@@ -625,7 +659,13 @@ namespace WlanFt
 
         private static Rectangle GetDownloadButtonBounds(Rectangle cell)
         {
-            return Rectangle.Inflate(cell, -3, -2);
+            Rectangle button = Rectangle.Inflate(cell, -3, -2);
+            if (button.Width > 104)
+            {
+                button.X = button.Right - 104;
+                button.Width = 104;
+            }
+            return button;
         }
 
         private void RemoteFileClicked(object sender, MouseEventArgs e)

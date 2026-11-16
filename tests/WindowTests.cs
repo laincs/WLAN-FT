@@ -33,6 +33,41 @@ namespace WlanFt
                     (bool)dragArea.Invoke(form, new object[] { new Point(1, 1) }) ||
                     (bool)dragArea.Invoke(form, new object[] { new Point(200, 21) }))
                     throw new Exception("The top drag area is incorrect.");
+
+                MethodInfo drawHeader = typeof(MainForm).GetMethod("DrawColumnHeader", BindingFlags.Instance | BindingFlags.NonPublic);
+                using (Bitmap image = new Bitmap(120, 26))
+                using (Graphics graphics = Graphics.FromImage(image))
+                using (ListView list = new ListView())
+                {
+                    ColumnHeader header = new ColumnHeader { Text = "Progress" };
+                    DrawListViewColumnHeaderEventArgs args = new DrawListViewColumnHeaderEventArgs(
+                        graphics, new Rectangle(0, 0, 120, 26), 0, header, ListViewItemStates.Default,
+                        Color.White, Color.Black, list.Font);
+                    drawHeader.Invoke(form, new object[] { list, args });
+                    if (args.DrawDefault || image.GetPixel(2, 2).GetBrightness() > 0.3)
+                        throw new Exception("The column header does not use the dark theme.");
+
+                    args = new DrawListViewColumnHeaderEventArgs(graphics, new Rectangle(0, 0, 6, 26), 0,
+                        header, ListViewItemStates.Default, Color.White, Color.Black, list.Font);
+                    drawHeader.Invoke(form, new object[] { list, args });
+                }
+
+                MethodInfo resizeColumn = typeof(MainForm).GetMethod("ResizeActionColumn", BindingFlags.Instance | BindingFlags.NonPublic);
+                MethodInfo buttonBounds = typeof(MainForm).GetMethod("GetDownloadButtonBounds", BindingFlags.Static | BindingFlags.NonPublic);
+                foreach (string fieldName in new string[] { "sharedList", "remoteList" })
+                {
+                    ListView list = (ListView)typeof(MainForm).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+                    list.Size = new Size(1000, 100);
+                    resizeColumn.Invoke(form, new object[] { list, EventArgs.Empty });
+                    int width = 0;
+                    foreach (ColumnHeader column in list.Columns) width += column.Width;
+                    if (width != list.ClientSize.Width) throw new Exception("The column headers do not fill the list.");
+
+                    Rectangle cell = new Rectangle(500, 0, list.Columns[list.Columns.Count - 1].Width, 28);
+                    Rectangle button = (Rectangle)buttonBounds.Invoke(null, new object[] { cell });
+                    if (button.Width > 104 || button.Right != cell.Right - 3)
+                        throw new Exception("The action button does not fit at the right of its cell.");
+                }
             }
         }
     }
