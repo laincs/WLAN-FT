@@ -2,6 +2,8 @@
 
 Share files between Windows 10 and 11 computers on the same network, with no accounts or additional installations.
 
+![WLAN-FT showing example shared files](assets/screenshot.png)
+
 ## Usage
 
 1. Download the repository as a ZIP from **Code > Download ZIP** and extract the folder on each computer.
